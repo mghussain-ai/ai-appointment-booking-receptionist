@@ -1,0 +1,216 @@
+{
+  "name": "AI Appointment Booking Receptionist",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "appointment-booking",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b44753d0-336b-4419-8f85-0859e2eb54b5",
+      "name": "Website Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        80
+      ],
+      "webhookId": "appointment-webhook-001"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nconst fields = body.data.fields;\n\nlet name = '', email = '', phone = '', \n    date = '', time = '', reason = '';\n\nfields.forEach(field => {\n  const label = field.label.toLowerCase();\n  const value = field.value || '';\n  \n  if (label.includes('name')) name = value;\n  if (label.includes('email')) email = value;\n  if (label.includes('phone')) phone = value;\n  if (label.includes('date')) date = value;\n  if (label.includes('time')) time = value;\n  if (label.includes('reason') || label.includes('message')) reason = value;\n});\n\nif (!email) {\n  throw new Error('Email not found in form submission');\n}\n\nreturn [{ \n  json: { \n    name, \n    email, \n    phone, \n    date, \n    time, \n    reason,\n    submittedAt: new Date().toISOString() \n  } \n}];\n   \n"
+      },
+      "id": "455b90a9-61c4-4de2-be08-152c3877ea94",
+      "name": "Extract Form Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const openAIResponse = $input.first().json;\n\n// OpenAI response se text nikalo\nconst fullText = openAIResponse.message?.content || \n                 openAIResponse.text || \n                 openAIResponse.choices?.[0]?.message?.content || '';\n\nlet subject = 'Appointment Confirmation';\nlet body = fullText;\n\n// SUBJECT aur BODY alag karo\nif (fullText.includes('SUBJECT:') && fullText.includes('BODY:')) {\n  const subjectMatch = fullText.match(/SUBJECT:\\s*(.+?)\\n/);\n  const bodyMatch = fullText.match(/BODY:\\s*([\\s\\S]+)/);\n  \n  if (subjectMatch) subject = subjectMatch[1].trim();\n  if (bodyMatch) body = bodyMatch[1].trim();\n} else if (fullText.includes('Subject:')) {\n  // Agar OpenAI ne Subject: format use kiya\n  const subjectMatch = fullText.match(/Subject:\\s*(.+?)\\n/);\n  if (subjectMatch) subject = subjectMatch[1].trim();\n  \n  // Subject ke baad baqi sab body hai\n  body = fullText.replace(/Subject:\\s*.+?\\n/, '').trim();\n}\n\n// Form data wapis lo\nconst formData = $('Extract Form Data').first().json;\n\nreturn [{\n  json: {\n    subject,\n    body,\n    clientEmail: formData.email,\n    clientName: formData.name,\n    appointmentDate: formData.date,\n    appointmentTime: formData.time\n  }\n}];\n  "
+      },
+      "id": "2cc53f4d-7546-4a08-8b39-65dfbc267535",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.clientEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "595169ad-35cb-42cf-9cfa-17ce3b58e54d",
+      "name": "Send Confirmation to Client",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        176,
+        0
+      ],
+      "webhookId": "df0ef793-72b6-4e37-9e03-01aad4886774",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LHxscjSPfCCRJhns",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "khmuhammadghulamhussain0@gmail.com",
+        "subject": "=New Appointment: {{ $json.clientName }} - {{ $json.appointmentDate }} at {{ $json.appointmentTime }}",
+        "emailType": "text",
+        "message": "=New appointment booking received!\n\nClient: {{ $json.clientName }}\nDate: {{ $json.appointmentDate }}\nTime: {{ $json.appointmentTime }}\n\nFull confirmation email was sent to: {{ $json.clientEmail }}",
+        "options": {}
+      },
+      "id": "7db79616-5693-4c00-b17e-88ee27075bd6",
+      "name": "Notify Admin",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [
+        192,
+        224
+      ],
+      "webhookId": "d4969f42-0f53-42a4-b978-acaf65d389ae",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "LHxscjSPfCCRJhns",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=New appointment request received:\n\nClient Name: {{ $json.name }}\nEmail: {{ $json.email }}\nPhone: {{ $json.phone }}\nPreferred Date: {{ $json.date }}\nPreferred Time: {{ $json.time }}\nReason: {{ $json.reason }}\n\nWrite a professional confirmation email that:\n1. Confirms the appointment\n2. Repeats all the details\n3. Mentions office contact: 123 Main Street | +92-300-0000000\n4. Asks to contact if they need to reschedule\n5. Ends with a professional sign off",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -464,
+        64
+      ],
+      "id": "320e8cd6-6e2c-42a9-a35c-5bc5a1949792",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": "meta-llama/llama-3-8b-instruct",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        -432,
+        224
+      ],
+      "id": "d7232690-396b-4300-9c05-524fe52141b6",
+      "name": "OpenRouter Chat Model",
+      "credentials": {
+        "openRouterApi": {
+          "id": "qBfwMRyc3GbtKkeS",
+          "name": "OpenRouter account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Website Form Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Form Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Form Data": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation to Client",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation to Client": {
+      "main": [
+        []
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Admin": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "c6f4bd9b-d18b-46c2-aac7-22a14bf611a7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0e61c90a938d828ddaafd0fc7cee05e7951a0190b73d0a5cca3e7e26893e3a32"
+  },
+  "id": "siMRQOE6Q0YITX9m",
+  "tags": []
+}
